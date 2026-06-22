@@ -1,1 +1,78 @@
+name: TEST - Integration Tests & Tag
 
+# Triggered on push or PR to test branch
+on:
+  push:
+    branches:
+      - test
+  pull_request:
+    branches:
+      - test
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run all tests (unit + integration)
+        run: npm test
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report-test
+          path: coverage/
+
+  build-and-push-test:
+    name: Build & Push Test Image
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    # Only push image on direct push (not on PR)
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from package.json
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # Tag: :test-[version]
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-${{ steps.pkg.outputs.version }}
+          build-args: |
+            APP_VERSION=${{ steps.pkg.outputs.version }}
+
+      - name: Print image tag
+        run: echo "Image pushed with tag test-${{ steps.pkg.outputs.version }}"
